@@ -1,26 +1,28 @@
 # Package Manager Extensible Build Tools
 
 * Proposal: [SE-NNNN](NNNN-filename.md)
-* Authors: [Anders Bertelrud](https://github.com/abertelrud)
+* Authors: [Anders Bertelrud](https://github.com/abertelrud), , [Konrad 'ktoso' Malawski](https://github.com/ktoso), [Tom Doron](https://github.com/tomerd)
 * Review Manager: TBD
 * Status: **WIP**
 * Previous Pitch and Forum Discussion: [Package Manager Extensible Build Tools](https://forums.swift.org/t/package-manager-extensible-build-tools/10900)
 
 ## Introduction
 
-This proposal adds support for extensible build tools to the Swift Package Manager. The initial set of functionality is basic, focusing on a general way of allowing extensions to add commands to the build graph. The goal is to provide a scalable way of defining extensions and then add to the set of capabilities that extensions can provide over time, rather than to try to solve all the problems at once.
+This proposal adds support for extensible build tools to the Swift Package Manager. The initial set of functionality is intentionally basic and focuses on a general way of allowing extensions to add commands to the build graph. The goal is to provide a scalable way of defining extensions and then add to the set of capabilities that extensions can provide over time, rather than to try to solve all the problems at once.
 
 ## Motivation
 
 SwiftPM doesn’t currently provide any means of performing custom actions during a build. This includes source generation as well as custom processing for special types of resources.
 
-This is very restrictive for packages that need relatively simple customization, such as invoking build tools (such as `protoc` or resource processing tools), or that want to run a custom command to do various kinds of source generation or source inspection.
+This is very restrictive, and affects even packages with relatively simple customization needs.  Examples include invoking other build tools (such as `protoc`, to generate [google protocol buffers](https://developers.google.com/protocol-buffers) sources, or resource processing tools) or running a custom command to do various kinds of source generation or source inspection.
 
 Providing even basic support for extensibility is expected to allow codebases with more advanced needs to be built using the Swift Package Manager, and to automate many steps that package authors currently have to do manually (such as generate source code manually and commit it to their package).
 
 ## Proposed solution
 
-This proposal introduces a new target type called `packageExtension`. Package extensions are Swift targets that use specialized API in a new `PackageExtension` library (provided by SwiftPM) to create and configure commands to run during the build.
+This proposal introduces a new target type called `packageExtension`.
+
+Package extensions are Swift targets that use specialized API in a new `PackageExtension` library (provided by SwiftPM) to create and configure commands to run during the build.
 
 The initial `PackageExtension` API described in this proposal is minimal and is mainly focused on source code generation, but this API is expected to grow over time to support new package extension capabilities.
 
@@ -32,7 +34,7 @@ Note that the extension itself does *not* perform the actual work of the build t
 
 In this initial proposal, the package extension itself is not invoked during the build — however, the build commands that were created by the extension *are* run as part of any build in which they need to run, as determined by their input and output dependencies.
 
-The initial version of the proposal provides only limited ways for a package target to configure the build tool extensions it uses. However, because extension have read-only access to the package directory, they can read custom configuration files as needed. While this means that configuration of the extension resides outside of the package manifest, it does allow each package extension to provide a configuration format suitable for its own needs. Future proposals are expected to provide more flexibility in allowing package extension options to be provided by the client using the extension.
+The initial version of the proposal provides only limited ways for a package target to configure the build tool extensions it uses. However, because extension have read-only access to the package directory, they can read custom configuration files as needed. While this means that configuration of the extension resides outside of the package manifest, it does allow each package extension to provide a configuration format suitable for its own needs. We see this pattern commonly used in practice already, as external configuration files are used to configure such tools. Future proposals are expected to provide more flexibility in allowing package extension options to be provided by the client using the extension in their package definition.
 
 A package extension target should have dependencies on the targets that provide the executables that will be needed during the build. The binary target type will be extended to let it vend pre-built executables for build tools that cannot be built with SwiftPM.
 
@@ -98,7 +100,7 @@ extension Product {
     static func packageExtension(
         name: String,
         target: Dependency
-    ) -> Target
+    ) -> Product
 }
 
 final class PackageExtensionCapability {

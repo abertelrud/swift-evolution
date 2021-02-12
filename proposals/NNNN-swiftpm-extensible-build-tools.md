@@ -16,7 +16,7 @@ SwiftPM doesn’t currently provide any means of performing custom actions durin
 
 This is very restrictive, and affects even packages with relatively simple customization needs.  Examples include invoking other build tools (such as `protoc`, to generate [google protocol buffers](https://developers.google.com/protocol-buffers) sources, or resource processing tools) or running a custom command to do various kinds of source generation or source inspection.
 
-Providing even basic support for extensibility is expected to allow codebases with more advanced needs to be built using the Swift Package Manager, and to automate many steps that package authors currently have to do manually (such as generate source code manually and commit it to their package).
+Providing even basic support for extensibility is expected to allow more codebases to be built using the Swift Package Manager, and to automate many steps that package authors currently have to do manually (such as generate source code manually and commit it to their package).
 
 ## Proposed solution
 
@@ -26,15 +26,15 @@ Package extensions are Swift targets that use specialized API in a new `PackageE
 
 The initial `PackageExtension` API described in this proposal is minimal and is mainly focused on source code generation, but this API is expected to grow over time to support new package extension capabilities.
 
-Package extensions are somewhat analogous to package manifests:  both are Swift scripts that are evaluated in sandboxed environments and use specialized APIs for a limited and specific purpose.  In the case of the package manifest, the purpose is to define the characteristics of a package that cannot be determined from the file system.  In the case of a package extension, it is to procedurally define new commands and dependencies to run during the build based on a target structure and a set of build parameters.
+Package extensions are somewhat analogous to package manifests:  both are Swift scripts that are evaluated in sandboxed environments and use specialized APIs for a limited and specific purpose.  In the case of a package manifest, the purpose is to define those characteristics of a package that cannot be determined from the file system.  In the case of a package extension, it is to procedurally define new commands and dependencies to run during the build, based on a target structure and a set of build parameters.
 
 A package extension is invoked during the build system’s planning process, and is given access to the configuration of the target to which it applies. The package extension also has read-only access to the package directory of the target, and is also allowed to write to specially designated areas of the build output directory.
 
-Note that the extension itself does *not* perform the actual work of the build tool — that’s done by the command line invocation that the package extension configures.
+Note that the extension itself does *not* perform the actual work of the build tool — that’s done by the command line invocation that the package extension creates.
 
 In this initial proposal, the package extension itself is not invoked during the build — however, the build commands that were created by the extension *are* run as part of any build in which they need to run, as determined by their input and output dependencies.
 
-The initial version of the proposal provides only limited ways for a package target to configure the build tool extensions it uses. However, because extension have read-only access to the package directory, they can read custom configuration files as needed. While this means that configuration of the extension resides outside of the package manifest, it does allow each package extension to provide a configuration format suitable for its own needs. We see this pattern commonly used in practice already, as external configuration files are used to configure such tools. Future proposals are expected to provide more flexibility in allowing package extension options to be provided by the client using the extension in their package definition.
+This initial proposal provides only limited ways for a package target to configure the build tool extensions it uses. However, because extension have read-only access to the package directory, they can read custom configuration files as needed. While this means that configuration of the extension resides outside of the package manifest, it does allow each package extension to provide a configuration format suitable for its own needs. We see this pattern commonly used in practice already, in the form of configuration files that are used to configure source generators, etc. Future proposals are expected to let package extensions define options that can be controlled in the client package's manifest.
 
 A package extension target should have dependencies on the targets that provide the executables that will be needed during the build. The binary target type will be extended to let it vend pre-built executables for build tools that cannot be built with SwiftPM.
 
@@ -86,7 +86,7 @@ extension Target {
     /// restriction in a future release.
     static func extension(
         name: String,
-        capability: PackageExtensionCapability,
+        capability: ExtensionCapability,
         executables: [Dependency] = []
     ) -> Target
 }
@@ -103,7 +103,7 @@ extension Product {
     ) -> Product
 }
 
-final class PackageExtensionCapability {
+final class ExtensionCapability {
 
     /// Extensions that define a `prebuild` capability define commands to run before
     /// building the target.  Such commands are run before every build, and can be
@@ -113,7 +113,7 @@ final class PackageExtensionCapability {
     /// Because the commands emitted by `prebuild` extensions are invoked on every
     /// build, they can negatively impact build performance.  Such commands should
     /// therefore do their own dependency analysis to avoid any unnecessary work.
-    static func prebuild() -> PackageExtensionCapability
+    static func prebuild() -> ExtensionCapability
     
     /// Extensions that define a `buildTool` capability define commands to run at
     /// various points during the build, as determined by their input and output
@@ -132,7 +132,7 @@ final class PackageExtensionCapability {
         /// using it.  Future SwiftPM versions could refine this so that extensions
         /// could, for example, provide input filename filters that further control
         /// when they are invoked.
-    ) -> PackageExtensionCapability
+    ) -> ExtensionCapability
     
     /// Extensions that define a `postbuild` capability define commands to run after
     /// building the target.  Such commands are run after every build, and can be
@@ -142,7 +142,7 @@ final class PackageExtensionCapability {
     /// Because the commands emitted by `postbuild` extensions are invoked on every
     /// build, they can negatively impact build performance.  Such commands should
     /// therefore do their own dependency analysis to avoid any unnecessary work.
-    static func postbuild() -> PackageExtensionCapability
+    static func postbuild() -> ExtensionCapability
     
     // The idea is to add additional capabilities in the future, each with its own
     // semantics.  An extension can implement one or more of the capabilities, and
@@ -158,37 +158,36 @@ To allow targets to use package extensions, a `using` parameter that accepts a l
 extension Target {
     .target(
         . . .
-        using: [PackageExtensionUsage] = []
+        using: [ExtensionUsage] = []
     ),
     .executableTarget(
         . . .
-        using: [PackageExtensionUsage] = []
+        using: [ExtensionUsage] = []
     ),
     .testTarget(
         . . .
-        using: [PackageExtensionUsage] = []
+        using: [ExtensionUsage] = []
     )
 }
 
-final class PackageExtensionUsage {
+final class ExtensionUsage {
 
     // Specifies the use of a package extension with a given target or product name.
-    // In the case of a extension target in the same package, no package parmeter is
-    // provided; in the case of an extension product in a different target, the name
+    // In the case of an extension target in the same package, no package parameter is
+    // provided; in the case of an extension product in a different package, the name
     // of the package that provides it needs to be specified.  This package must be
     // in the package dependencies of the package containing the target that uses the
     // extension.  This is the same as a product dependency declaration on a target.
     static func extension(
         _ name: String,
-        package: String? = nil,
-        options: [String: Encodable] = [:]
-    ) -> PackageExtensionUsage
+        package: String? = nil
+    ) -> ExtensionUsage
 }
 ```
 
-This will allow targets that can have source files — currently only the `target`, `executableTarget`, and `testTarget` types — to “apply” one or more package extensions for the build of that target. The names of the package extensions are the names of the `packageExtension` targets (or, in the case of extensions provided by dependency packages, of the corresponding `packageExtension` products).
+This will allow targets that can have source files — currently only the `target`, `executableTarget`, and `testTarget` types — to “apply” one or more package extensions to the build of that target. The names specified in the `.extension()` entries are the names of `extension` targets (or, in the case of extensions provided by dependency packages, of the corresponding `extension` products).
 
-A target's package extensions are applied in the order in which they are listed — this allows one extension to act on output files produced by another extension of the same capability.  This allows, for example, a target to determine whether a linter should operate on source files generated by a different extension. Note that, because the commands that are generated by build tool extensions define inputs and outputs, the order in which the extensions are applied does not necessarily determine the order in which the commands will be run during the build.
+A target's package extensions are applied in the order in which they are listed — this allows one extension to act on output files produced by another extension that provides the same capability.  This allows, for example, a target to determine whether a linter should operate on source files generated by a different extension. Note that, because the commands that are generated by build tool extensions define inputs and outputs, the order in which the extensions are applied does not necessarily determine the order in which the commands will be run during the build.
 
 The API of the new `PackageExtension` library lets the package extension construct one or more build commands based on the build context for the target. The context includes the target and module names, the set of source files for the target (including those generated by previously applied package extensions),  information about the target's dependency closure, and other inputs from the package. The context also includes environmental conditions such as the build directory, intermediates directory, etc, as well as any options provided in the usage of the extension.
 
@@ -210,13 +209,13 @@ The initial proposed `PackageExtension` API is:
 /// Provides information about the target being built, as well as contextual
 /// information such as the paths of the directories to which commands should
 /// be configured to write their outputs.  This information should be used when
-/// part of generating the commands to be run during the build.
+/// generating the commands to be run during the build.
 let targetBuildContext: TargetBuildContext
 
 /// Constructs commands to run during the build, including full command lines.
 /// All paths should be based on the ones passed to the extension in the target
 /// build context.
-let commandConstructor: CommandConstructor
+let commandConstructor: BuildCommandConstructor
 
 /// Emits errors, warnings, and remarks to be shown as a result of running the
 /// extension.
@@ -229,45 +228,44 @@ let diagnosticsEmitter: DiagnosticsEmitter
 /// part of generating the commands to be run during the build.
 protocol TargetBuildContext {
     /// The name of the target being built.
-    let targetName: String
+    var targetName: String { get }
     
     /// The module name of the target.  This is usually derived from the name,
-    /// but can possibly be customizable in the package manifest in some future
-    /// SwiftPM version).
-    let moduleName: String
+    /// but could be customizable in the package manifest in a future SwiftPM
+    /// version.
+    var moduleName: String { get }
     
     /// The path of the target source directory.
-    let targetDir: Path
+    var targetDir: Path { get }
     
     /// That path of the package that contains the target.
-    let packageDir: Path
-    
-    // [Tom] should this be a function instead of a property to potentially save performance?
+    var packageDir: Path { get }
     
     /// Absolute paths of the source files in the target. This might include
     /// derived source files generated by other extensions).
-    let sourceFiles: [Path]
+    var sourceFiles: [Path] { get }
     
-    /// Information about all targets on which the target for which the exten-
-    /// sion is being invoked either directly or indirectly depends.  This list
-    /// is in topologically sorted order, with immediate dependencies appearing
-    /// earlier and more distant dependencies later in the list.  This is mainly
-    /// intended for generating lists of search path arguments, etc.
-    let dependencies: [DependencyTargetInfo]
+    /// Information about all targets in the dependency closure of the target
+    /// to which the extension is being applied.  This list is in topologically
+    /// sorted order, with immediate dependencies appearing earlier and more
+    /// distant dependencies later in the list.  This is mainly intended for
+    /// generating lists of search path arguments, etc.
+    var dependencies: [DependencyTargetInfo] { get }
     
-    /// Provides information about a target on which the target being built depends.
+    /// Provides information about a target in the dependency closure of the
+    /// target to which the extension is being applied.
     protocol DependencyTargetInfo {
         
         /// The name of the target.
-        let targetName: String
+        var targetName: String { get }
         
         /// The module name of the target.  This is usually derived from the name,
         /// but can possibly be customizable in the package manifest in some future
         /// SwiftPM version).
-        let moduleName: String
+        var moduleName: String { get }
         
         /// The path of the target source directory.
-        let targetDir: Path
+        var targetDir: Path { get }
     }
 
     /// The path of an output directory into which files generated by the build
@@ -275,31 +273,25 @@ protocol TargetBuildContext {
     /// package extension itself may also write to this directory.  Any files
     /// written to this directory by a prebuild action will be added as source
     /// files during build planning.
-    let outputDir: Path
+    var outputDir: Path { get }
     
     /// A directory into which the package extension or the tool it invokes can
     /// write any caches that speed up its operation or any other intermediate
     /// files that shouldn't be further processed.
-    let cacheDir: Path
-    
-    /// Any options provided in the `PackageExtensionUsage` of the target to
-    /// which this extension applies.
-    let options: [String: Decodable]
+    var cacheDir: Path { get }
     
     /// Looks up and returns the path of a named command line executable tool.
     /// The executable must be either in the toolchain or in the system search
     /// path for executables, or be provided by an executable target or binary
-    /// target on which the package extension target depends.  Returns nil, but
-    /// does not throw an error, if the tool isn't found.  Extensions that re-
-    /// quire the tool should emit an error diagnostic if it cannot be found.
-    func lookupTool(named name: String) -> Path?
+    /// target on which the package extension target depends.  Throws an error
+    /// if the tool cannot be found.
+    func lookupTool(named name: String) throws -> Path
 }
 
 /// Constructs commands to run during the build, including full command lines.
 /// All paths should be based on the ones passed to the extension in the target
 /// build context.
-// [Tom] should this be named "BuildCommandConstructor"?
-protocol CommandConstructor {
+protocol BuildCommandConstructor {
     
     /// Creates a command to run during the build.  The executable should be a
     /// path returned by `TargetBuildContext.lookupTool(named:)`, and all the
@@ -307,11 +299,9 @@ protocol CommandConstructor {
     /// based on the paths provided in the target build context structure.
     ///
     /// Note that input and output dependencies are ignored for prebuild and
-    /// postbuild actions, since they always run before and after the build
+    /// postbuild actions, since they always run before and after the build,
     /// respectively.
-    
-    // [Tom] is "addCommand" or "registerCommand" more correct?
-    func createCommand(
+    func addCommand(
         executable: Path,
         arguments: [String],
         workingDirectory: Path? = nil,
@@ -322,9 +312,22 @@ protocol CommandConstructor {
     )
 
     /// Registers a generated source file that will be passed to later stages
-    /// of the build, and be considered as either a source file or a resource
-    /// based on the filename matching rules.
-    func registerGeneratedOutputFile(path: Path)
+    /// of the build.  They will be treated as either source files or resource
+    /// files based on the filename matching rules, as if they had been in the
+    /// target source directory.  This is different from the output dependen-
+    /// cies specified when adding a command, which are not automatically con-
+    /// sidered as source files subject to further processing.
+    func addGeneratedOutputFile(path: Path)
+    
+    /// Registers a directory into which a `prebuild` command will write output
+    /// files that should be considered as derived source files of the target.
+    /// They will be treated as either source files or resource files based on
+    /// the filename matching rules, as if they had been in the target source
+    /// directory.
+    ///
+    /// It is an error to call this function from another kind of extension than
+    /// a `prebuild` extension.
+    func addPrebuildOutputDirectory(path: Path)
 }
 
 /// Emits errors, warnings, and remarks to be shown as a result of running the
@@ -342,37 +345,40 @@ protocol DiagnosticsEmitter {
 
 /// A path of a file, directory, or symlink in the file system.
 protocol Path: ExpressibleByStringLiteral {
-    public func appending(_ components: [String]) -> Path
-    public func appending(_ components: String...) -> Path
+    func appending(_ components: [String]) -> Path
+    func appending(_ components: String...) -> Path
+    var suffix: String { get }
+    var parent: Path { get }
+    // etc
     
-    /// The API here will need to be filled inbut it should be fairly straight-
-    /// forward.  We should also look at FilePath in SwiftSystem.
+    /// The API here will need to be filled in, but this should be fairly
+    /// straightforward.  We should also look at FilePath in SwiftSystem.
 }
 ```
 
-During package graph resolution, packages and any binary artifacts are fetched as usual. Any extensions defined by a package are registered by name, in the same way as other targets, and any usage of package extensions is bound by name in the same was target dependencies are bound.
+During package graph resolution, packages and any binary artifacts are fetched as usual. Any extensions defined by a package are registered by name, in the same way as other targets, and any uses of package extension targets and products are bound by name in the same way as target and product dependencies are bound.
 
-After resolving the package graph, SwiftPM invokes the package extensions that are in use by the reachable targets in the package graph. The way in which this is done is similar to how package manifests are evaluated. It is largely an implementation detail, but the semantics are as if the script is either interpreted or compiled to an executable and then run in a sandbox, with input from SwiftPM being passed to the extension in serialized form and output from the extension being passed back in. a similar manner.
+After resolving the package graph, SwiftPM invokes the package extensions that are used by the reachable targets in the package graph. This is done in a similar way to how package manifests are evaluated. This is largely an implementation detail, but the semantics are as if the Swift script that implements the extension is either interpreted or compiled to an executable and then run in a sandbox.  Input from SwiftPM is passed to the extension in serialized form and made available through the `TargetBuildContext` type, and output from the extension being passed back to SwiftPM in a similar manner.
 
-Each extension is invoked once for each target that uses it, with that target’s context as input. The command definitions emitted by a package extension are used to set up build commands to run before, during, or after the build.
+Each extension is invoked once for each target that uses it, with that target’s context as its input. The command definitions emitted by a package extension are used to set up build commands to run before, during, or after the build.  Any diagnostics emitted by the extension are shown to the user, and any errors cause the build to fail.
 
-The commands that run before and after the build (as indicated by `prebuild` and `postbuild` extension capabilities, respectively) run before and after the actual build occurs. Output files created by commands resulting from `prebuild` extensions can feed into the build plan creation, if they are emitted into file system locations provided by the target build context passed to the extension. This allows them to generate output files whose names are not known until the command is run. These output files are expected to be created in temporary directories passed to the extension for that purpose — it is not advisable to modify the source files in the package during the build.
+The commands that run before and after the build (as indicated by specifying `prebuild` and `postbuild` , respectively, as the extension capability) run before and after the actual build occurs. Output files created by commands resulting from `prebuild` extensions can feed into the build plan creation, if they are emitted into directories designated by the extension as prebuild output directories. This allows them to generate output files whose names are not known until the command is run. These output files are expected to be created in temporary directories passed to the extension for that purpose — it is not advisable to modify the source files in the package during the build.
 
 Because commands emitted by `prebuild` and `postbuild` extensions are run on every build, they can negatively impact build performance. Such commands should do their own dependency analysis and use caching to avoid any unnecessary work.
 
 Command invocations emitted by package extensions that have the `buildTool` capability can additionally specify input and output dependencies. These commands are incorporated into the build graph, and are only run when their outputs are missing or their inputs have changed. This is preferable when the names of outputs and inputs can be predicted before running the command, since it lets the commands use the build system’s dependency analysis to only run the commands when needed.
 
-It is important to note the distinction between a package extension and the build commands it produces: the extension is invoked before the build, after the structure and build parameters of the target that uses it is known but before any build commands are run. It may also be invoked again if there are changes to the structure or other input conditions (but not when the *contents* of files change).
+It is important to note the distinction between a package extension and the build commands it produces: the *extension* is invoked before the build, after the structure and build parameters of the target that uses it is known but before any build commands are run. It may also be invoked again if there are changes to the structure or other input conditions (but not when the *contents* of files change).
 
-The commands defined by an extension, on the other hand, are invoked before, during, or after the build.
+The *commands* defined by an extension, on the other hand, are invoked before, during, or after each build.
 
-Binary targets will be extended to allow them to contain executable commands and other needed files (e.g. system `.proto` files in the case of `protoc`, etc). They will need to support different executable binaries based on platform and architecture.
+Binary targets will be extended to allow them to contain executable commands and other needed files (such as the system `.proto` files in the case of `protoc`, etc).  Binary targets will need to support different executable binaries based on platform and architecture.
 
 ## Example 1: SwiftGen
 
-The first example is a package that uses SwiftGen to generate source code for accessing resources. The package extension target can be defined in the same package as the one that provides the source generation tool (SwiftGen, in this case), so that client packages have access to it just by depending on the SwiftGen package.
+The first example is a package that uses SwiftGen to generate source code for accessing resources. The package extension target can be defined in the same package as the one that provides the source generation tool (SwiftGen, in this case), so that client packages access it just by adding a package dependency on the SwiftGen package.
 
-The `swiftgen` command may generate output files with any name. In this initial support for build extensions, this means that it must specify a `prebuild` capability so that the generated sources can be processed during the build.
+The `swiftgen` command may generate output files with any name, and they cannot be known without either running the command or separately parsing the configuration file. In this initial proposal for build extensions, this means that the SwiftGen extension must specify a `prebuild` capability in order for the source files it generates to be processed during the build.
 
 ### Client Package
 
@@ -389,7 +395,7 @@ MyPackage
 ```
 
 
-SwiftGen supports using a config file named `swiftgen.yml` and this example implementation of the extension assumes a convention that it is located in the package directory.
+SwiftGen supports using a config file named `swiftgen.yml` and this example implementation of the extension assumes a convention that it is located in the package directory.  A different implementation of the extension might assume a per-target convention, or a combination of the two.
 
 The package manifest has a dependency on the SwiftGen package, which vends an extension that the client package can use for any of its targets by referencing it by name in the package manifest:
 
@@ -410,7 +416,7 @@ let package = Package(
 )
 ```
 
-The `using` parameter of the executable target applies the SwiftGenExtension extension to the build of the target. This causes the extension to be invoked for the target and causes the commands it defines to be run at the appropriate point in the build, based on the capabilities it vends.
+The `using` parameter of the executable target applies the SwiftGenExtension extension to the build of the target. This causes the extension to be invoked for the target, and causes the commands it defines to be run at the appropriate point in the build (based on the capabilities it vends).
 
 In this case the extension is provided by an external package, so the form of `.extension()` that provides a package name is used. This is directly analogous to the `.product()` form of regular target dependencies.
 
@@ -418,7 +424,7 @@ The order in which extensions are listed determines the order in which they will
 
 ### Extension Package
 
-Using the facilities in this proposal, the SwiftGen package authors could implement a package extension that creates a command to run `swiftgen` before the build. In this example the SwiftGen package is extended with a package extension target implemented in Swift.
+Using the facilities in this proposal, the SwiftGen package authors could implement a package extension that creates a command to run `swiftgen` before the build.
 
 This is the SwiftGenExtension target referenced in the client package:
 
@@ -426,13 +432,14 @@ This is the SwiftGenExtension target referenced in the client package:
 SwiftGen
  ├ Package.swift
  └ Sources
+    ├ . . .
     └ SwiftGenExtension
        └ main.swift     
 ```
 
 In this case, `main.swift` is the Swift script that implements the package extension target.
 
-The package manifest would have a `packageExtensionTarget` target in addition to the existing target for the executable itself:
+The package manifest would have a `extension` target in addition to the existing target that provides the `swiftgen` command line tool itself:
 
 ```
 // swift-tools-version: 999.0
@@ -443,60 +450,62 @@ let package = Package(
     targets: [
         /// Package extension that tells `swiftpm` how to run `swiftgen` based on
         /// the configuration file.  The client specifies the name of this target
-        /// in `usingExtensions`.  This example uses the prebuild action, so that
-        /// `swiftgen` runs before each build.  A different example might use the
-        /// `builtTool` action if the names of inputs and outputs could be known
-        /// ahead of time.
-        // [Tom] .extension could be nicer IMO
-        .packageExtension(
+        /// in the `using` clause.  This example uses the `prebuild` action, so
+        /// that `swiftgen` runs before each build.  A different example might use
+        /// the `builtTool` action if the names of inputs and outputs could be
+        /// known ahead of time.
+        .extension(
             name: "SwiftGenExtension",
             capability: .prebuild(),
             dependencies: ["SwiftGen"]
         ),
         
-        /// Swift target that provides the SwiftGen tool itself.
+        /// Binary target that provides the built SwiftGen executables.
         .binaryTarget(
             name: "SwiftGen",
-            . . . etc . . .
+            url: "https://url/to/the/built/swiftgen-executables.zip",
+            checksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ),
     ]
 )
 ```
 
-The package extension script implementing the `prebuild` capability might look like:
+The package extension script implementing the `prebuild` capability might look like this:
 
 ```
 import PackageExtension
 
-// In this case we generate a single invocation of `swiftgen`, passing it the path
-// of the configuration file at the top of the package.  The `targetBuildContext`
-// property is a global input parameter.
-guard let swiftgenPath = targetBuildContext.lookupTool(named: "swiftgen") else {
-    diagnosticsEmitter.fatalError("couldn't find the ‘swiftgen’ tool")
-}
-        
+// This example configures `swiftgen` to write to a "SwiftGenOutputs" directory.
+let genOutputsDir = context.derivedSourcesDir.appending("SwiftGenOutputs")
+commandConstructor.addPrebuildOutputDirectory(genOutputsDir)
+
 // Create a command to run `swiftgen` as a prebuild command.  It will be run before
 // every build and generates source files into an output directory provided by the
 // build context.
 commandContructor.createCommand(
-    executable: swiftgenPath,
+    executable:
+        targetBuildContext.lookupTool(named: "swiftgen"),
     commandline: [
         "config", "run",
-        "--config", context.projectDir.appending("swiftgen.yml")
+        "--config", targetBuildContext.projectDir.appending("swiftgen.yml")
     ],
     environment: [
-        "PROJECT_DIR": context.projectDir,
-        "TARGET_NAME": context.targetName,
-        "DERIVED_SOURCES_DIR": context.derivedSourcesDir,
+        "PROJECT_DIR": targetBuildContext.projectDir,
+        "TARGET_NAME": targetBuildContext.targetName,
+        "DERIVED_SOURCES_DIR": genOutputsDir,
     ]
 )
 ```
 
-An alternate use of `swiftgen` could instead invoke it once for each input file, passing it output files whose names are derived from the names of the input files. This might, however, make per-file configuration somewhat harder. There is a trade-off here between using a `prebuild` action or a `buildTool` action, and there are improvements that could be made to both SwiftPM’s support for build tools as well as to the `swiftgen` tool that could make this smoother in the future. Once SwiftPM’s native build system (and those of IDEs that use libSwiftPM) supports generating further work during the build, the extensions introduced in this proposal could be improved to take advantage of that.
+An alternate use of `swiftgen` could instead invoke it once for each input file, passing it output files whose names are derived from the names of the input files. This might, however, make per-file configuration somewhat harder.
+
+There is a trade-off here between implementing a `prebuild` extension or a `buildTool` extension.  Future improvements to SwiftPM's build system could let it support commands whose outputs aren't known until the command is run — and possibly the `swiftgen` tool could also be simplified for the case in which it's called from SwiftPM, which can now dynamically provide the names of the input files in the target.
 
 ## Example 2: SwiftProtobuf
 
-The second example is a package that uses SwiftProtobuf to generate source files from `.proto` files. In addition to the package extension product, the package provides the runtime library that the generated Swift code uses. Since `protoc` isn’t built using SwiftPM, it also has a binary target with a reference to a `zip` archive containing the executable.
+The second example is a package that uses SwiftProtobuf to generate source files from `.proto` files. In addition to the package extension product, the package provides the runtime library that the generated Swift code uses.
+
+Since `protoc` isn’t built using SwiftPM, it also has a binary target with a reference to a `zip` archive containing the executable.
 
 ### Client Package
 
@@ -531,9 +540,7 @@ let package = Package(
                 .product("SwiftProtobufLib", package: "swift-protobuf")
             ],
             using: [
-                .extension("SwiftProtobuf", package: "swift-protobuf",
-                    options: ["Visibility": "Public"]
-                )
+                .extension("SwiftProtobuf", package: "swift-protobuf")
             ]
         ),
     ]
@@ -542,11 +549,9 @@ let package = Package(
 
 As with the previous example, the `using` parameter of the executable target applies the `SwiftProtobuf` extension for that target.
 
-[Tom] didnt we want to leave this for configuration files for the initial release? I worry about commiting to too much API surface area upfront
+This version of the initial proposal does not yet define a way to pass options to the extension through the manifest.  Since the extension has read-only access to the package directory, it can define conventions for a configuration file in the package or target directory.  A future improvement to the proposal should allow a way for the extension to provide custom types that the client package manifest could use to set options to the extension.
 
-In this case the target is also specifying options to pass to the extension.  This version of the proposal does not yet define a way for the extension to provide definitions of the options it accepts.  A future improvement to the proposal would ideally allow a way for the extension to provide custom types that the client could use in the manifest.
-
-In this version of the proposal, the client target must also list any runtime libraries that will be needed, as this example shows. A future improvement could extend the `PackageExtension` API to let the extension provide this information.
+In this version of the proposal, the client target must also list any runtime libraries that will be needed, as this example shows. A future improvement could extend the `PackageExtension` API to let the extension define additional dependencies that targets using the extension would automatically get.
 
 ### Extension Package
 
@@ -571,7 +576,7 @@ let package = Package(
     targets: [
         /// Package extension that tells `swiftpm` how to deal with `.proto` files.
         /// The client specifies the name of this target in `usingExtensions`.
-        .packageExtension(
+        .extension(
             name: "SwiftProtobuf",
             capability: .buildTool()
             dependencies: ["protoc-gen-swift", "protoc"]
@@ -586,8 +591,8 @@ let package = Package(
         /// Binary target that provides the prebuilt `protoc` executable.
         .binaryTarget(
             name: "protoc"
-            url: "https://url/to/some/remote/protoc-executables.zip",
-            checksum: "The checksum of the ZIP archive that contains the executables."
+            url: "https://url/to/the/built/protoc-executables.zip",
+            checksum: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ),
         
         /// Runtime library that clients will need to link against by specifying
@@ -607,14 +612,9 @@ The package extension script might look like:
 import PackageExtension
 
 // In this case we generate an invocation of `protoc` for each input file, passing
-// it the path of the `protoc-gen-swift` generator plug-in. The `targetBuildContext`
-// property is a global input parameter.
-guard let protocPath = targetBuildContext.lookupTool(named: "protoc") else {
-    diagnosticsEmitter.fatalError("couldn't find the ‘protoc’ tool")
-}
-guard let protocGenSwiftPath = targetBuildContext.lookupTool(named: "protoc-gen-swift") else {
-    diagnosticsEmitter.fatalError("couldn't find the ‘protoc-gen-swift’ plug-in tool")
-}
+// it the path of the `protoc-gen-swift` generator plug-in.
+let protocPath = targetBuildContext.lookupTool(named: "protoc")
+let protocGenSwiftPath = targetBuildContext.lookupTool(named: "protoc-gen-swift")
 
 /// Construct the search paths for the .proto files, which can include any of the
 /// targets in the dependency closure.  Here we assume that the public ones are in
@@ -641,15 +641,15 @@ let moduleMappingsFilePath = targetBuildContext.outputDirPath.appending("module-
 for inputPath in targetBuildContext.inputPath {
     guard inputPath.hasSuffix(".proto") else { continue }
 
-    // Construct a command line for invoking `protoc`.
-    var commandLine = [
+    // Construct the `protoc` arguments.
+    var arguments = [
         "--plugin=protoc-gen-swift=\(protoGenSwiftPath)",
         "--swift_out=\(targetBuildContext.outputDirectory)",
         "--swift_opt=ProtoPathModuleMappings=\(moduleMappingFilePath)",
         "--swift_opt=Visibility=\(targetBuildContext.options["Visibility"])"
     ]
-    commandLine.append(contentsOf: protoSearchPaths.flatMap { ["-I", $0] })
-    commandline.append(inputPath)
+    arguments.append(contentsOf: protoSearchPaths.flatMap { ["-I", $0] })
+    arguments.append(inputPath)
     
     // The name of the output file is based on the name of the input file, in a way
     // that's determined by the protoc source generator plug-in we're using.
@@ -660,7 +660,7 @@ for inputPath in targetBuildContext.inputPath {
     // system know when to invoke the command.
     commandContructor.createCommand(
         executable: protocPath,
-        commandline: commandLine,
+        arguments: arguments,
         description: "Compiling \(inputPath)",
         inputs: [inputPath],
         outputs: [outputPath])
@@ -705,7 +705,7 @@ import PackageDescription
 let package = Package(
     name: "gen-swifty",
     targets: [
-        .packageExtension(
+        .extension(
             name: "GenSwifty",
             capability: .buildTool()
             dependencies: ["GenSwiftyTool"]
@@ -749,7 +749,7 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "MyExe",
-            using: [.extension("MySourceGenExt", options: ["MyOption": ["A", "B", "C"]])]
+            using: [.extension(name: "MySourceGenExt")])]
         ),
         .packageExtensionTarget(
             name: "MySourceGenExt",
@@ -779,20 +779,27 @@ Beyond that, there is inherent risk in running build tools provided by other pac
 
 ## Future Directions
 
-This proposal is fairly basic and leaves many improvements for the future. Among them are:
+This proposal is intentionally fairly basic and leaves many improvements for the future. Among them are:
 
 - the ability for package extensions to define new types that can be used to configure those extensions in package manifests
 - the ability for build tools that want to do so to have access to the full build graph at a detailed level
 - the ability for prebuild actions to depend on tools built by SwiftPM
 - the ability for package extensions (not just build tools) to use libraries provided by other targets
+- the ability for build commands to emit output files that feed back into the rule system to generate new work during the build (this requires support in SwiftPM's native build system as well as in the build systems of some IDEs that use libSwiftPM)
 
 ## Alternatives Considered
 
-A simpler approach would be to allow a package to contain shell scripts that are unconditionally invoked during the build. In order to support even moderately complex uses, however, there would still need to be some way for the script to get information about the target being built and its dependencies, and to know where to write output files. This information would need to be passed down through environment variables or command-line flags, or through file system conventions, and this seems a more subtle and less clear approach than providing a Swift API to access this information. If shell scripts are needed for some use cases, it would be fairly straightforward for a package author to write a custom extension to invoke that shell script and pass it inputs using either command line arguments or environment variables, as it sees fit.
+A simpler approach would be to allow a package to contain shell scripts that are unconditionally invoked during the build. In order to support even moderately complex uses, however, there would still need to be some way for the script to get information about the target being built and its dependencies, and to know where to write output files.
 
-Even with an approach based on shell scripts, there would still need to be some way to define the names of the output files ahead of time in order for SwiftPM to hook them into its build graph (needing to know the names of outputs ahead of time is a limitation of the native build system that SwiftPM currently uses, as well as of some of the IDEs that are based on libSwiftPM — these build systems currently have no way to discover new work based on the output of commands that are run). Defining these inputs and outputs using an API seems clearer than some approach based on naming conventions or requiring them to be listed in the client package’s manifest.
+This information would need to be passed to the script through some means, such as command line flags or environment variables, or through file system conventions. This seems a more subtle and less clear approach than providing a Swift API to access this information. If shell scripts are needed for some use cases, it would be fairly straightforward for a package author to write a custom extension to invoke that shell script and pass it inputs from the build context using either command line arguments or environment variables, as it sees fit.
 
-Another approach would be to wait to provide extensible build tools until the build systems of SwiftPM and of IDEs using it can be reworked to support arbitrary discovery of new work. This would unnecessarily delay use of the many kinds of build tools that can take advantage of the support proposed here, however. We believe that the approach taken here, by defining a common approach to various kinds of package extensions and a path toward defining more advanced capabilities over time, will provide some benefit now while still allowing more sophisticated behavior in the future.
+Even with an approach based on shell scripts, there would still need to be some way of defining the names of the output files ahead of time in order for SwiftPM to hook them into its build graph (needing to know the names of outputs ahead of time is a limitation of the native build system that SwiftPM currently uses, as well as of some of the IDEs that are based on libSwiftPM — these build systems currently have no way to apply build rules to the output of commands that are run in the same build).
+
+Defining these inputs and outputs using an API seems clearer than some approach based on naming conventions or requiring output files to be listed in the client package’s manifest.
+
+Another approach would be to delay providing extensible build tools until the build systems of SwiftPM and of IDEs using it can be reworked to support arbitrary discovery of new work. This would, however, delay these improvements for the various kinds of build tools that *can* take advantage of the support proposed here.
+
+We believe that the approach taken here — defining a common approach for specifying extensions that declare the capabilities they provide, and with a goal of defining more advanced capabilities over time — will provide some benefit now while still allowing more sophisticated behavior in the future.
 
 ## References
 
